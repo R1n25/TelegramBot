@@ -10,7 +10,7 @@ import csv
 from datetime import datetime
 from telegram.ext import CallbackContext
 
-# В начале файла добавим настройку логирования
+# В начале файла добавим настройку логирования я не бездарь
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
