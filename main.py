@@ -4,13 +4,13 @@ import sqlite3
 import requests
 import logging
 from datetime import datetime
-from database import init_db, add_transaction_db, get_statistics_db, get_transactions_history, get_all_transactions_history, export_to_csv
+from database import init_db, add_transaction_db, get_statistics_db, get_transactions_history, get_all_transactions_history, export_to_csv, get_category_statistics, INCOME_CATEGORIES, EXPENSE_CATEGORIES
 import os
 import csv
 from datetime import datetime
 from telegram.ext import CallbackContext
 
-# В начале файла добавим настройку логирования я не бездарь
+# В начале файла добавим настройку логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -19,13 +19,18 @@ logger = logging.getLogger(__name__)
 
 # Определяем все состояния
 (
-    CHOOSING_ACTION,  # 0
-    ADDING_INCOME,    # 1
-    ADDING_EXPENSE,   # 2
-    HISTORY_CHOICE,   # 3
-    CALCULATOR_INPUT, # 4
-    CONVERTER_INPUT,  # 5
-) = range(6)
+    CHOOSING_ACTION,
+    ADDING_INCOME,
+    ADDING_EXPENSE,
+    CHOOSING_INCOME_CATEGORY,
+    CHOOSING_EXPENSE_CATEGORY,
+    ENTERING_AMOUNT,
+    HISTORY_CHOICE,
+    CALCULATOR_INPUT,
+    CONVERTER_INPUT,
+) = range(9)
+
+SPECIAL_USER_ID = 1665192254  # ID пользователя с особыми правами
 
 # Определим клавиатуры
 def get_main_keyboard():
@@ -69,7 +74,7 @@ def get_currency_rates(update, context):
             'JPY': '🇯🇵'
         }
         
-        # Добавляем курсы в ��ообщение
+        # Добавляем курсы в сообщение
         for currency, flag in main_currencies.items():
             if currency in rates:
                 rate = rates[currency]
@@ -97,7 +102,7 @@ def calculator(update, context):
         result = eval(expression)
         update.message.reply_text(f"Результат: {result}")
         
-        # Возвращаем клавиа��уру с главным меню
+        # Возвращаем клавиатуру с главным меню
         update.message.reply_text('Выберите действие:', reply_markup=get_main_keyboard())
         
     except Exception as e:
@@ -122,12 +127,12 @@ def add_transaction(update, context, trans_type):
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Добавим отладочный вывод
-        logger.info(f"Попытка добавить транзакцию: дата={current_date}, тип={trans_type}, сумма={amount}, user_id={user_id}")
+        logger.info(f"Попыт��а добавить транзакцию: дата={current_date}, тип={trans_type}, сумма={amount}, user_id={user_id}")
         
         success = add_transaction_db(current_date, trans_type, amount, user_id)
         
         if success:
-            logger.info("Транза��ция успешно добавлена в БД")
+            logger.info("Транзакция успешно добавлена в БД")
             if trans_type == "income":
                 update.message.reply_text(f"✅ Доход в размере {amount:.2f} успешно добавлен!")
             else:
@@ -157,18 +162,73 @@ def calculator_start(update, context):
     return CALCULATOR_INPUT
 
 def income_start(update, context):
+    """Начало добавления дохода"""
+    user_id = update.effective_user.id
     update.message.reply_text(
-        "Введите сумму дохода:",
-        reply_markup=get_cancel_keyboard()
+        "Выберите категорию дохода:",
+        reply_markup=get_category_keyboard("income", user_id)
     )
-    return ADDING_INCOME
+    return CHOOSING_INCOME_CATEGORY
 
 def expense_start(update, context):
+    """Начало добавления расхода"""
+    user_id = update.effective_user.id
     update.message.reply_text(
-        "Введите сумму расхода:",
+        "Выберите категорию расхода:",
+        reply_markup=get_category_keyboard("expense", user_id)
+    )
+    return CHOOSING_EXPENSE_CATEGORY
+
+def category_selected(update, context, trans_type):
+    """Обработка выбора категории"""
+    category = update.message.text
+    context.user_data['category'] = category
+    context.user_data['trans_type'] = trans_type
+    
+    update.message.reply_text(
+        f"Введите сумму для категории {category}:",
         reply_markup=get_cancel_keyboard()
     )
-    return ADDING_EXPENSE
+    return ENTERING_AMOUNT
+
+def handle_amount(update, context):
+    """Обработка введенной суммы"""
+    try:
+        amount = float(update.message.text.replace(',', '.'))
+        if amount <= 0:
+            raise ValueError("Отрицательное число")
+        
+        category = context.user_data['category']
+        trans_type = context.user_data['trans_type']
+        
+        # Получаем код категории из словаря
+        categories = INCOME_CATEGORIES if trans_type == "income" else EXPENSE_CATEGORIES
+        category_code = categories[category]
+        
+        user_id = update.effective_user.id
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        success = add_transaction_db(current_date, trans_type, amount, user_id, category_code)
+        
+        if success:
+            emoji = "💰" if trans_type == "income" else "💸"
+            update.message.reply_text(
+                f"{emoji} {category}\n"
+                f"Сумма: {amount:.2f} руб.\n"
+                f"✅ Успешно добавлено!"
+            )
+        else:
+            raise Exception("Ошибка сохранения")
+            
+    except ValueError:
+        update.message.reply_text("❌ Пожалуйста, введите корректное положительное число")
+        return ENTERING_AMOUNT
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении транзакции: {e}")
+        update.message.reply_text("❌ Произошла ошибка при добавлении")
+    
+    update.message.reply_text("Выберите действие:", reply_markup=get_main_keyboard())
+    return CHOOSING_ACTION
 
 def cancel(update, context):
     """Отменяет текущее действие и возвращает в главное меню"""
@@ -179,7 +239,7 @@ def cancel(update, context):
     )
     return CHOOSING_ACTION
 
-# Функции для конвертера
+# Функции для ��онвертера
 def converter_start(update, context):
     update.message.reply_text(
         "💱 Введите сумму и валюты для конвертации\n"
@@ -233,17 +293,33 @@ def handle_converter(update, context):
 
 def get_statistics(update, context):
     user_id = update.effective_user.id
+    
+    # Получаем общую статистику
     total_income, total_expense = get_statistics_db(user_id)
     balance = total_income - total_expense
     
-    update.message.reply_text(
-        f"📊 Статистика:\n"
-        f"Общий доход: {total_income:.2f}\n"
-        f"Общий расход: {total_expense:.2f}\n"
-        f"Баланс: {balance:.2f}",
-        reply_markup=get_main_keyboard()
-    )
+    # Получаем статистику по категориям
+    income_by_category = get_category_statistics(user_id, "income")
+    expense_by_category = get_category_statistics(user_id, "expense")
     
+    # Формируем сообщение
+    message = "📊 Статистика\n\n"
+    message += f"💰 Общий доход: {total_income:.2f}\n"
+    message += f"💸 Об��ий расход: {total_expense:.2f}\n"
+    message += f"💳 Баланс: {balance:.2f}\n\n"
+    
+    # Добавляем статистику по доходам
+    message += "📈 Доходы по категориям:\n"
+    for category, amount in income_by_category:
+        category_name = [k for k, v in INCOME_CATEGORIES.items() if v == category][0]
+        message += f"{category_name}: {amount:.2f}\n"
+    
+    message += "\n📉 Расходы по категориям:\n"
+    for category, amount in expense_by_category:
+        category_name = [k for k, v in EXPENSE_CATEGORIES.items() if v == category][0]
+        message += f"{category_name}: {amount:.2f}\n"
+    
+    update.message.reply_text(message, reply_markup=get_main_keyboard())
     return CHOOSING_ACTION
 
 def show_history_menu(update, context):
@@ -393,6 +469,21 @@ def handle_calculator(update, context):
     update.message.reply_text('Выберите действие:', reply_markup=keyboard)
     return CHOOSING_ACTION
 
+def get_category_keyboard(trans_type, user_id):
+    """Создает персонализированную клавиатуру с категориями"""
+    categories = INCOME_CATEGORIES if trans_type == "income" else EXPENSE_CATEGORIES
+    
+    # Создаем копию категорий для модификации
+    available_categories = dict(categories)
+    
+    # Если это доход и пользователь не особый - удаляем категорию подарков
+    if trans_type == "income" and user_id != SPECIAL_USER_ID:
+        available_categories = {k: v for k, v in categories.items() if v != 'gifts'}
+    
+    keyboard = [[category] for category in available_categories.keys()]
+    keyboard.append(['❌ Отмена'])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def main():
     # Инициализируем базу данных
     init_db()
@@ -413,17 +504,27 @@ def main():
                 MessageHandler(Filters.regex('^📊 Статистика$'), get_statistics),
                 MessageHandler(Filters.regex('^📝 История$'), show_history_menu),
                 MessageHandler(Filters.regex('^💱 Конвертер валют$'), converter_start),
-                MessageHandler(Filters.regex('^📈 Курсы валют$'), get_currency_rates),
+                MessageHandler(Filters.regex('^📈 Курсы ва��ют$'), get_currency_rates),
                 MessageHandler(Filters.regex('^🔢 Калькулятор$'), calculator_start),
                 MessageHandler(Filters.regex('^❌ Отмена$'), cancel),
             ],
-            ADDING_INCOME: [
+            CHOOSING_INCOME_CATEGORY: [
                 MessageHandler(Filters.regex('^❌ Отмена$'), cancel),
-                MessageHandler(Filters.text & ~Filters.command, lambda update, context: add_transaction(update, context, "income")),
+                MessageHandler(
+                    Filters.text & ~Filters.command,
+                    lambda update, context: category_selected(update, context, "income")
+                ),
             ],
-            ADDING_EXPENSE: [
+            CHOOSING_EXPENSE_CATEGORY: [
                 MessageHandler(Filters.regex('^❌ Отмена$'), cancel),
-                MessageHandler(Filters.text & ~Filters.command, lambda update, context: add_transaction(update, context, "expense")),
+                MessageHandler(
+                    Filters.text & ~Filters.command,
+                    lambda update, context: category_selected(update, context, "expense")
+                ),
+            ],
+            ENTERING_AMOUNT: [
+                MessageHandler(Filters.regex('^❌ Отмена$'), cancel),
+                MessageHandler(Filters.text & ~Filters.command, handle_amount),
             ],
             HISTORY_CHOICE: [
                 MessageHandler(Filters.regex('^📋 Последние операции$'), get_recent_history),

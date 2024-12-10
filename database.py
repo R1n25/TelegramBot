@@ -10,33 +10,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+EXPENSE_CATEGORIES = {
+    '🏠 ЖКХ': 'utilities',
+    '🍔 Еда': 'food',
+    '🚗 Транспорт': 'transport',
+    '👕 Одежда': 'clothes',
+    '🏥 Здоровье': 'health',
+    '🎮 Развлечения': 'entertainment',
+    '📚 Образование': 'education',
+    '🏪 Покупки': 'shopping'
+}
+
+INCOME_CATEGORIES = {
+    '💼 Зарплата': 'salary',
+    '💰 Подработка': 'part_time',
+    '💸 Инвестиции': 'investments',
+    '🎁 Подарки': 'gifts',
+    '📈 Проценты': 'interest'
+}
+
 def init_db():
     try:
         conn = sqlite3.connect('finance.db')
         c = conn.cursor()
         
-        # Создаем таблицу, если она не существует
+        # Обновляем структуру таблицы, добавляя категорию
         c.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
                 type TEXT NOT NULL,
                 amount REAL NOT NULL,
-                category TEXT,
+                category TEXT NOT NULL,
                 user_id INTEGER NOT NULL
             )
         ''')
         
-        # Сохраняем изменения
         conn.commit()
         conn.close()
-        
         logger.info("База данных успешно инициализирована")
         return True
     except Exception as e:
         logger.error(f"Ошибка при инициализации базы данных: {e}")
-        if conn:
-            conn.close()
         return False
 
 def add_transaction_db(date, trans_type, amount, user_id, category=None):
@@ -64,7 +79,7 @@ def add_transaction_db(date, trans_type, amount, user_id, category=None):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"Ошибка при добавлении транзакции в БД: {e}")
+        logger.error(f"Ошибка п��и добавлении транзакции в БД: {e}")
         if conn:
             conn.close()
         return False
@@ -168,6 +183,28 @@ def export_to_csv(user_id):
     except Exception as e:
         logger.error(f"Ошибка при экспорте в CSV: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
+
+def get_category_statistics(user_id, trans_type):
+    """Получение статистики по категориям"""
+    try:
+        conn = sqlite3.connect('finance.db')
+        c = conn.cursor()
+        
+        c.execute("""
+            SELECT category, SUM(amount) as total
+            FROM transactions 
+            WHERE user_id = ? AND type = ?
+            GROUP BY category
+            ORDER BY total DESC
+        """, (user_id, trans_type))
+        
+        return c.fetchall()
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики по категориям: {e}")
+        return []
     finally:
         if conn:
             conn.close()
