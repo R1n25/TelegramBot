@@ -31,6 +31,20 @@ logger = logging.getLogger(__name__)
 ) = range(9)
 
 SPECIAL_USER_ID = 1665192254  # ID пользователя с особыми правами
+GAMER_USER_ID = 1665192254    # ID пользователя, которому доступны игры (можете изменить на другой ID)
+
+# Обновляем словарь EXPENSE_CATEGORIES в database.py, добавляя категорию игр
+EXPENSE_CATEGORIES = {
+    '🏠 ЖКХ': 'utilities',
+    '🍔 Еда': 'food',
+    '🚗 Транспорт': 'transport',
+    '👕 Одежда': 'clothes',
+    '🏥 Здоровье': 'health',
+    '🎮 Развлечения': 'entertainment',
+    '📚 Образование': 'education',
+    '🏪 Покупки': 'shopping',
+    '🎮 Игры': 'games'  # Новая категория
+}
 
 # Определим клавиатуры
 def get_main_keyboard():
@@ -127,7 +141,7 @@ def add_transaction(update, context, trans_type):
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Добавим отладочный вывод
-        logger.info(f"Попыт��а добавить транзакцию: дата={current_date}, тип={trans_type}, сумма={amount}, user_id={user_id}")
+        logger.info(f"Попытка добавить транзакцию: дата={current_date}, тип={trans_type}, сумма={amount}, user_id={user_id}")
         
         success = add_transaction_db(current_date, trans_type, amount, user_id)
         
@@ -239,7 +253,7 @@ def cancel(update, context):
     )
     return CHOOSING_ACTION
 
-# Функции для ��онвертера
+# Функции для конвертера
 def converter_start(update, context):
     update.message.reply_text(
         "💱 Введите сумму и валюты для конвертации\n"
@@ -292,35 +306,36 @@ def handle_converter(update, context):
     return CHOOSING_ACTION
 
 def get_statistics(update, context):
-    user_id = update.effective_user.id
-    
-    # Получаем общую статистику
-    total_income, total_expense = get_statistics_db(user_id)
-    balance = total_income - total_expense
-    
-    # Получаем статистику по категориям
-    income_by_category = get_category_statistics(user_id, "income")
-    expense_by_category = get_category_statistics(user_id, "expense")
-    
-    # Формируем сообщение
-    message = "📊 Статистика\n\n"
-    message += f"💰 Общий доход: {total_income:.2f}\n"
-    message += f"💸 Об��ий расход: {total_expense:.2f}\n"
-    message += f"💳 Баланс: {balance:.2f}\n\n"
-    
-    # Добавляем статистику по доходам
-    message += "📈 Доходы по категориям:\n"
-    for category, amount in income_by_category:
-        category_name = [k for k, v in INCOME_CATEGORIES.items() if v == category][0]
-        message += f"{category_name}: {amount:.2f}\n"
-    
-    message += "\n📉 Расходы по категориям:\n"
-    for category, amount in expense_by_category:
-        category_name = [k for k, v in EXPENSE_CATEGORIES.items() if v == category][0]
-        message += f"{category_name}: {amount:.2f}\n"
-    
-    update.message.reply_text(message, reply_markup=get_main_keyboard())
-    return CHOOSING_ACTION
+    """Получение и отображение статистики"""
+    try:
+        user_id = update.effective_user.id
+        logger.info(f"Запрос статистики от пользователя {user_id}")  # Добавляем логирование
+        
+        # Получаем общую статистику
+        total_income, total_expense = get_statistics_db(user_id)
+        balance = total_income - total_expense
+        
+        # Формируем базовое сообщение
+        message = "📊 Статистика:\n\n"
+        message += f"💰 Доходы: {total_income:.2f} руб.\n"
+        message += f"💸 Расходы: {total_expense:.2f} руб.\n"
+        message += f"💳 Баланс: {balance:.2f} руб."
+        
+        # Отправляем сообщение
+        update.message.reply_text(
+            message,
+            reply_markup=get_main_keyboard()
+        )
+        
+        return CHOOSING_ACTION
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики: {e}")
+        update.message.reply_text(
+            "❌ Произошла ошибка при получении статистики",
+            reply_markup=get_main_keyboard()
+        )
+        return CHOOSING_ACTION
 
 def show_history_menu(update, context):
     """Показывает меню истории операций"""
@@ -476,9 +491,14 @@ def get_category_keyboard(trans_type, user_id):
     # Создаем копию категорий для модификации
     available_categories = dict(categories)
     
-    # Если это доход и пользователь не особый - удаляем категорию подарков
-    if trans_type == "income" and user_id != SPECIAL_USER_ID:
-        available_categories = {k: v for k, v in categories.items() if v != 'gifts'}
+    if trans_type == "income":
+        # Если это доход и пользователь не особый - удаляем категорию подарков
+        if user_id != SPECIAL_USER_ID:
+            available_categories = {k: v for k, v in categories.items() if v != 'gifts'}
+    else:
+        # Если это расход и пользователь не геймер - удаляем категорию игр
+        if user_id != GAMER_USER_ID:
+            available_categories = {k: v for k, v in categories.items() if v != 'games'}
     
     keyboard = [[category] for category in available_categories.keys()]
     keyboard.append(['❌ Отмена'])
@@ -504,7 +524,7 @@ def main():
                 MessageHandler(Filters.regex('^📊 Статистика$'), get_statistics),
                 MessageHandler(Filters.regex('^📝 История$'), show_history_menu),
                 MessageHandler(Filters.regex('^💱 Конвертер валют$'), converter_start),
-                MessageHandler(Filters.regex('^📈 Курсы ва��ют$'), get_currency_rates),
+                MessageHandler(Filters.regex('^📈 Курсы валют$'), get_currency_rates),
                 MessageHandler(Filters.regex('^🔢 Калькулятор$'), calculator_start),
                 MessageHandler(Filters.regex('^❌ Отмена$'), cancel),
             ],

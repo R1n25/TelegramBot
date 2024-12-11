@@ -79,27 +79,41 @@ def add_transaction_db(date, trans_type, amount, user_id, category=None):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"Ошибка п��и добавлении транзакции в БД: {e}")
+        logger.error(f"Ошибка при добавлении транзакции в БД: {e}")
         if conn:
             conn.close()
         return False
 
 def get_statistics_db(user_id):
+    """Получение общей статистики по доходам и расходам"""
     try:
         conn = sqlite3.connect('finance.db')
         c = conn.cursor()
         
-        c.execute("SELECT SUM(amount) FROM transactions WHERE type='income' AND user_id=?", (user_id,))
+        # Получаем сумму доходов
+        c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM transactions 
+            WHERE user_id = ? AND type = 'income'
+        """, (user_id,))
         total_income = c.fetchone()[0] or 0
         
-        c.execute("SELECT SUM(amount) FROM transactions WHERE type='expense' AND user_id=?", (user_id,))
+        # Получаем сумму расходов
+        c.execute("""
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM transactions 
+            WHERE user_id = ? AND type = 'expense'
+        """, (user_id,))
         total_expense = c.fetchone()[0] or 0
         
-        conn.close()
         return total_income, total_expense
+        
     except Exception as e:
-        logger.error(f"Ошибка при получении статистики: {e}")
+        logger.error(f"Ошибка при получении статистики из БД: {e}")
         return 0, 0
+    finally:
+        if conn:
+            conn.close()
 
 def get_transactions_history(user_id, limit=10):
     """Получает последние транзакции пользователя"""
